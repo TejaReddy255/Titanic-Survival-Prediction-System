@@ -1,45 +1,63 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
+from typing import Literal
 import joblib
 import pandas as pd
+import logging
+import time
+import os
 
-# Initialize FastAPI
-app = FastAPI(title="Titanic Survival Prediction API", description="API to predict Titanic passenger survival")
+# Setup Logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
-# Load the trained model (using the relative path from the Colab root)
-model_path = "titanic-ml-project/model/titanic_pipeline.pkl"
+app = FastAPI(title="Titanic Survival Prediction API")
+
+# ==========================================
+# 🛑 THE FIX: DYNAMIC PATH RESOLUTION
+# ==========================================
+# This ensures it finds the model folder whether running locally or inside Docker
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+model_path = os.path.join(BASE_DIR, "model", "titanic_pipeline.pkl")
+
 try:
     model = joblib.load(model_path)
+    logger.info("Machine Learning model loaded successfully.")
 except Exception as e:
     model = None
-    print(f"Error loading model: {e}")
+    logger.error(f"Failed to load model from {model_path}: {e}")
 
-# Define the input schema using Pydantic for robust validation
+# Advanced Input Validation Schema
 class PassengerData(BaseModel):
-    Pclass: int = Field(..., description="Passenger Class (1, 2, or 3)")
-    Sex: str = Field(..., description="Sex ('male' or 'female')")
-    Age: float = Field(..., description="Age in years")
-    Fare: float = Field(..., description="Passenger Fare")
-    Embarked: str = Field(..., description="Port of Embarkation ('C', 'Q', or 'S')")
+    Pclass: Literal[1, 2, 3] = Field(..., description="Passenger Class (1, 2, or 3)")
+    Sex: Literal['male', 'female'] = Field(..., description="Sex ('male' or 'female')")
+    Age: float = Field(..., ge=0, le=120, description="Age in years")
+    Fare: float = Field(..., ge=0, description="Passenger Fare")
+    Embarked: Literal['C', 'Q', 'S'] = Field(..., description="Port of Embarkation ('C', 'Q', or 'S')")
 
-# GET / -> Health Check
+# Logging Middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
+    response = await call_next(request)
+    process_time = time.time() - start_time
+    logger.info(f"Method: {request.method} | Path: {request.url.path} | Status: {response.status_code} | Time: {process_time:.4f}s")
+    return response
+
+# Endpoints
 @app.get("/")
 def health_check():
-    return {"status": "Healthy", "message": "Titanic ML API is up and running!"}
+    return {"status": "Healthy", "message": "API is running and model path is fixed!"}
 
-# POST /predict -> Prediction Module
 @app.post("/predict")
 def predict_survival(data: PassengerData):
     if model is None:
         raise HTTPException(status_code=500, detail="Model is not loaded.")
     
     try:
-        # Convert incoming JSON/dict to a pandas DataFrame for the pipeline
-        # Note: Depending on your Pydantic version, you might need data.dict() instead
         input_dict = data.model_dump() if hasattr(data, 'model_dump') else data.dict()
         input_df = pd.DataFrame([input_dict])
         
-        # Run prediction through the pipeline
         prediction = model.predict(input_df)[0]
         probability = model.predict_proba(input_df)[0][1]
         
