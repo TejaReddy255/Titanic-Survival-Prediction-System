@@ -13,7 +13,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Initialize FastAPI
-app = FastAPI(title="Titanic Survival Prediction API (Bonus Version)")
+app = FastAPI(title="Titanic Survival Prediction API")
 
 # ==========================================
 # 2. Load Model
